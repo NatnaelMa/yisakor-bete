@@ -1081,6 +1081,11 @@ const SEED_STUDENTS=[
 ]
 
 window._bootApp = function(){
+  // Auto-seed owner account if no users exist
+  if(DB.getUsers().length===0){
+    DB.saveUsers([{id:'owner-1',username:'nati leader',password:'@675667@',role:'owner',createdAt:new Date().toISOString()}])
+    DB.markSetupDone()
+  }
   // Auto-seed students if none exist or list is incomplete
   if(window.FS && DB.getStudents().length < SEED_STUDENTS.length){
     const now=new Date().toISOString()
