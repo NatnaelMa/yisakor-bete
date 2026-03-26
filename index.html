@@ -1078,8 +1078,8 @@ const SEED_STUDENTS=[
 ]
 
 window._bootApp = function(){
-  // Auto-seed students if none exist
-  if(window.FS && DB.getStudents().length===0){
+  // Auto-seed students if none exist or list is incomplete
+  if(window.FS && DB.getStudents().length < SEED_STUDENTS.length){
     const now=new Date().toISOString()
     const students=SEED_STUDENTS.map((r,i)=>({
       id:'seed-'+i,
