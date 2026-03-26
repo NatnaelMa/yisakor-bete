@@ -5,6 +5,28 @@
 <meta name="viewport" content="width=device-width,initial-scale=1.0"/>
 <title>ይሳኮር ቤቴ — Student Enrollment</title>
 <script src="https://cdn.tailwindcss.com"></script>
+<script type="module">
+// ═══════════════════════════════════════════
+// FIREBASE SETUP
+// ═══════════════════════════════════════════
+import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js'
+import { getFirestore, doc, getDoc, setDoc, collection, getDocs, addDoc, updateDoc, deleteDoc, onSnapshot } from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js'
+
+const firebaseConfig = {
+  apiKey: "AIzaSyClWTAH7_UmCgxjCFep3-TmnX4K6HURnYs",
+  authDomain: "ysakor-bete.firebaseapp.com",
+  projectId: "ysakor-bete",
+  storageBucket: "ysakor-bete.firebasestorage.app",
+  messagingSenderId: "219589882501",
+  appId: "1:219589882501:web:dae5a1545c1ff04bf7efec"
+}
+
+const firebaseApp = initializeApp(firebaseConfig)
+const db = getFirestore(firebaseApp)
+window.FS = { db, doc, getDoc, setDoc, collection, getDocs, addDoc, updateDoc, deleteDoc, onSnapshot }
+window.firebaseReady = true
+document.dispatchEvent(new Event('firebase-ready'))
+</script>
 <script>
 tailwind.config={theme:{extend:{colors:{primary:{'50':'#f0f9ff','100':'#e0f2fe','200':'#bae6fd','300':'#7dd3fc','400':'#38bdf8','500':'#0ea5e9','600':'#0284c7','700':'#0369a1','800':'#075985','900':'#0c4a6e'},accent:{'500':'#d946ef','600':'#c026d3'}},animation:{'fade-in':'fadeIn 0.3s ease','slide-up':'slideUp 0.3s ease','slide-down':'slideDown 0.3s ease'},keyframes:{fadeIn:{'0%':{opacity:'0'},'100%':{opacity:'1'}},slideUp:{'0%':{transform:'translateY(10px)',opacity:'0'},'100%':{transform:'translateY(0)',opacity:'1'}},slideDown:{'0%':{transform:'translateY(-10px)',opacity:'0'},'100%':{transform:'translateY(0)',opacity:'1'}}}}}}
 </script>
@@ -30,23 +52,86 @@ select option{background:#0c4a6e;color:white}
 
 <script>
 // ═══════════════════════════════════════════
-// DATA STORE (localStorage-backed)
+// DATA STORE (Firebase + localStorage)
 // ═══════════════════════════════════════════
 const DB = {
-  getUsers(){ return JSON.parse(localStorage.getItem('yb_users')||'[]') },
-  saveUsers(u){ localStorage.setItem('yb_users',JSON.stringify(u)) },
-  getStudents(){ return JSON.parse(localStorage.getItem('yb_students')||'[]') },
-  saveStudents(s){ localStorage.setItem('yb_students',JSON.stringify(s)) },
+  // Session stays local (fast login)
   getSession(){ return JSON.parse(localStorage.getItem('yb_session')||'null') },
   saveSession(s){ localStorage.setItem('yb_session',JSON.stringify(s)) },
   clearSession(){ localStorage.removeItem('yb_session') },
   isSetupDone(){ return localStorage.getItem('yb_setup')==='1' || this.getUsers().length>0 },
   markSetupDone(){ localStorage.setItem('yb_setup','1') },
+
+  // Users — Firebase + local cache
+  getUsers(){
+    return JSON.parse(localStorage.getItem('yb_users')||'[]')
+  },
+  saveUsers(u){
+    localStorage.setItem('yb_users',JSON.stringify(u))
+    // sync to Firebase
+    if(window.FS){
+      const {db,doc,setDoc}=window.FS
+      setDoc(doc(db,'app','users'),{list:u}).catch(console.error)
+    }
+  },
+
+  // Students — Firebase + local cache
+  getStudents(){
+    return JSON.parse(localStorage.getItem('yb_students')||'[]')
+  },
+  saveStudents(s){
+    localStorage.setItem('yb_students',JSON.stringify(s))
+    if(window.FS){
+      const {db,doc,setDoc}=window.FS
+      setDoc(doc(db,'app','students'),{list:s}).catch(console.error)
+    }
+  },
+
+  // Call session — Firebase + local cache
   getCallSession(){ return JSON.parse(localStorage.getItem('yb_call_session')||'{}') },
-  saveCallSession(s){ localStorage.setItem('yb_call_session',JSON.stringify(s)) },
-  clearCallSession(){ localStorage.removeItem('yb_call_session') },
+  saveCallSession(s){
+    localStorage.setItem('yb_call_session',JSON.stringify(s))
+    if(window.FS){
+      const {db,doc,setDoc}=window.FS
+      setDoc(doc(db,'app','callSession'),{data:s}).catch(console.error)
+    }
+  },
+  clearCallSession(){
+    localStorage.removeItem('yb_call_session')
+    if(window.FS){
+      const {db,doc,setDoc}=window.FS
+      setDoc(doc(db,'app','callSession'),{data:{}}).catch(console.error)
+    }
+  },
+
+  // Pull latest data from Firebase
+  async syncFromFirebase(){
+    if(!window.FS) return
+    const {db,doc,getDoc}=window.FS
+    try{
+      const usersSnap=await getDoc(doc(db,'app','users'))
+      if(usersSnap.exists()) localStorage.setItem('yb_users',JSON.stringify(usersSnap.data().list||[]))
+
+      const studentsSnap=await getDoc(doc(db,'app','students'))
+      if(studentsSnap.exists()) localStorage.setItem('yb_students',JSON.stringify(studentsSnap.data().list||[]))
+
+      const callSnap=await getDoc(doc(db,'app','callSession'))
+      if(callSnap.exists()) localStorage.setItem('yb_call_session',JSON.stringify(callSnap.data().data||{}))
+
+      // Check setup
+      if(usersSnap.exists()&&(usersSnap.data().list||[]).length>0) localStorage.setItem('yb_setup','1')
+    }catch(e){ console.error('Firebase sync error',e) }
+  },
+
   init(){
-    // no auto-create — owner sets up on first run
+    // Sync from Firebase when ready
+    if(window.firebaseReady){
+      this.syncFromFirebase().then(()=>{ if(window._bootApp) window._bootApp() })
+    } else {
+      document.addEventListener('firebase-ready',()=>{
+        this.syncFromFirebase().then(()=>{ if(window._bootApp) window._bootApp() })
+      })
+    }
   }
 }
 DB.init()
@@ -1009,14 +1094,18 @@ function setupPage(){
 // ═══════════════════════════════════════════
 // BOOT
 // ═══════════════════════════════════════════
-const session=Auth.current()
-if(!DB.isSetupDone()){
-  navigate(setupPage)
-} else if(session&&(session.role==='owner'||session.role==='admin')){
-  navigate(studentsPage)
-} else {
-  navigate(loginPage)
+window._bootApp = function(){
+  const session=Auth.current()
+  if(!DB.isSetupDone()){
+    navigate(setupPage)
+  } else if(session&&(session.role==='owner'||session.role==='admin')){
+    navigate(studentsPage)
+  } else {
+    navigate(loginPage)
+  }
 }
+// Show loading while Firebase syncs
+document.getElementById('app').innerHTML='<div class="min-h-screen flex items-center justify-center"><div class="flex flex-col items-center gap-4"><div class="w-12 h-12 border-4 border-white/30 border-t-white rounded-full" style="animation:spin 1s linear infinite"></div><p class="text-white/60 text-sm">Loading...</p></div></div>'
 </script>
 </body>
 </html>
