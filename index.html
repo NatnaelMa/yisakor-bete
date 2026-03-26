@@ -418,7 +418,7 @@ function studentsPage(){
                 <td class="px-4 py-3">
                   <div class="flex items-center gap-2">
                     <div class="w-8 h-8 rounded-lg bg-gradient-to-br from-primary-500 to-purple-500 flex items-center justify-center text-white font-bold text-sm flex-shrink-0">${s.fullName.charAt(0).toUpperCase()}</div>
-                    <span class="text-white font-medium">${s.fullName}${s.fatherName?' '+s.fatherName:''}</span>
+                    <span class="text-white font-medium">${s.fullName} ${s.fatherName||'-'}</span>
                   </div>
                 </td>
                 <td class="px-8 py-3"><span class="px-2 py-0.5 rounded-full text-xs font-medium border ${genderBadge[s.gender]||'bg-white/10 text-white/60 border-white/20'}">${s.gender}</span></td>
@@ -1059,6 +1059,9 @@ function setupPage(){
     if(!username){ errEl.textContent='Username is required'; errEl.classList.remove('hidden'); return }
     if(password.length<4){ errEl.textContent='Password must be at least 4 characters'; errEl.classList.remove('hidden'); return }
     if(password!==confirm){ errEl.textContent='Passwords do not match'; errEl.classList.remove('hidden'); return }
+    // Block if owner already exists
+    const existingUsers=DB.getUsers()
+    if(existingUsers.find(u=>u.role==='owner')){ errEl.textContent='An owner account already exists. Please log in.'; errEl.classList.remove('hidden'); return }
     DB.saveUsers([{id:'owner-1',username,password,role:'owner',createdAt:new Date().toISOString()}])
     DB.markSetupDone()
     toast(`Welcome, ${username}! Your owner account is ready.`,'success')
