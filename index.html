@@ -1,0 +1,1022 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1.0"/>
+<title>ይሳኮር ቤቴ — Student Enrollment</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script>
+tailwind.config={theme:{extend:{colors:{primary:{'50':'#f0f9ff','100':'#e0f2fe','200':'#bae6fd','300':'#7dd3fc','400':'#38bdf8','500':'#0ea5e9','600':'#0284c7','700':'#0369a1','800':'#075985','900':'#0c4a6e'},accent:{'500':'#d946ef','600':'#c026d3'}},animation:{'fade-in':'fadeIn 0.3s ease','slide-up':'slideUp 0.3s ease','slide-down':'slideDown 0.3s ease'},keyframes:{fadeIn:{'0%':{opacity:'0'},'100%':{opacity:'1'}},slideUp:{'0%':{transform:'translateY(10px)',opacity:'0'},'100%':{transform:'translateY(0)',opacity:'1'}},slideDown:{'0%':{transform:'translateY(-10px)',opacity:'0'},'100%':{transform:'translateY(0)',opacity:'1'}}}}}}
+</script>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet"/>
+<style>
+*{box-sizing:border-box;font-family:'Inter',sans-serif}
+::-webkit-scrollbar{width:6px}
+::-webkit-scrollbar-thumb{background:rgba(255,255,255,0.2);border-radius:9999px}
+select option{background:#0c4a6e;color:white}
+.spin{animation:spin 1s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+.fade-in{animation:fadeIn 0.3s ease}
+.slide-up{animation:slideUp 0.3s ease}
+.slide-down{animation:slideDown 0.3s ease}
+@keyframes fadeIn{from{opacity:0}to{opacity:1}}
+@keyframes slideUp{from{transform:translateY(10px);opacity:0}to{transform:translateY(0);opacity:1}}
+@keyframes slideDown{from{transform:translateY(-10px);opacity:0}to{transform:translateY(0);opacity:1}}
+</style>
+</head>
+<body class="bg-gradient-to-br from-primary-900 via-primary-800 to-purple-900 min-h-screen">
+<div id="app"></div>
+<div id="toasts" class="fixed bottom-6 right-6 z-50 flex flex-col gap-3 pointer-events-none"></div>
+
+<script>
+// ═══════════════════════════════════════════
+// DATA STORE (localStorage-backed)
+// ═══════════════════════════════════════════
+const DB = {
+  getUsers(){ return JSON.parse(localStorage.getItem('yb_users')||'[]') },
+  saveUsers(u){ localStorage.setItem('yb_users',JSON.stringify(u)) },
+  getStudents(){ return JSON.parse(localStorage.getItem('yb_students')||'[]') },
+  saveStudents(s){ localStorage.setItem('yb_students',JSON.stringify(s)) },
+  getSession(){ return JSON.parse(localStorage.getItem('yb_session')||'null') },
+  saveSession(s){ localStorage.setItem('yb_session',JSON.stringify(s)) },
+  clearSession(){ localStorage.removeItem('yb_session') },
+  isSetupDone(){ return localStorage.getItem('yb_setup')==='1' || this.getUsers().length>0 },
+  markSetupDone(){ localStorage.setItem('yb_setup','1') },
+  getCallSession(){ return JSON.parse(localStorage.getItem('yb_call_session')||'{}') },
+  saveCallSession(s){ localStorage.setItem('yb_call_session',JSON.stringify(s)) },
+  clearCallSession(){ localStorage.removeItem('yb_call_session') },
+  init(){
+    // no auto-create — owner sets up on first run
+  }
+}
+DB.init()
+
+// ═══════════════════════════════════════════
+// AUTH
+// ═══════════════════════════════════════════
+const Auth = {
+  login(username,password){
+    const users=DB.getUsers()
+    const user=users.find(u=>u.username===username&&u.password===password)
+    if(!user) throw new Error('Invalid credentials')
+    const session={id:user.id,username:user.username,role:user.role}
+    DB.saveSession(session)
+    return session
+  },
+  logout(){ DB.clearSession() },
+  current(){ return DB.getSession() },
+  isPrivileged(){ const s=this.current(); return s&&(s.role==='owner'||s.role==='admin') },
+  isOwner(){ const s=this.current(); return s&&s.role==='owner' }
+}
+
+// ═══════════════════════════════════════════
+// TOAST
+// ═══════════════════════════════════════════
+function toast(msg,type='info'){
+  const colors={success:'bg-emerald-500 border-emerald-600',error:'bg-red-500 border-red-600',info:'bg-primary-500 border-primary-600'}
+  const icons={success:'✓',error:'✕',info:'ℹ'}
+  const el=document.createElement('div')
+  el.className=`pointer-events-auto flex items-center gap-3 px-4 py-3 rounded-xl border text-white shadow-lg min-w-64 max-w-sm transition-all duration-300 ${colors[type]} fade-in`
+  el.innerHTML=`<span class="text-lg font-bold">${icons[type]}</span><span class="text-sm font-medium flex-1">${msg}</span><button onclick="this.parentElement.remove()" class="text-white/70 hover:text-white text-lg">×</button>`
+  document.getElementById('toasts').appendChild(el)
+  setTimeout(()=>{ el.style.opacity='0'; el.style.transform='translateY(8px)'; setTimeout(()=>el.remove(),300) },4000)
+}
+
+// ═══════════════════════════════════════════
+// ROUTER
+// ═══════════════════════════════════════════
+function render(page){
+  const app=document.getElementById('app')
+  app.innerHTML=''
+  app.appendChild(page())
+}
+
+function navigate(page){
+  window.currentPage=page
+  render(page)
+}
+
+// ═══════════════════════════════════════════
+// COMPONENTS
+// ═══════════════════════════════════════════
+function navbar(){
+  const session=Auth.current()
+  const roleBadge={owner:'bg-amber-500/20 text-amber-300 border-amber-500/30',admin:'bg-primary-500/20 text-primary-300 border-primary-500/30',user:'bg-white/10 text-white/50 border-white/20'}
+  const roleIcon={owner:'👑',admin:'🛡️',user:'👤'}
+  const nav=document.createElement('nav')
+  nav.className='sticky top-0 z-40 bg-black/20 backdrop-blur-md border-b border-white/10'
+  nav.innerHTML=`
+    <div class="max-w-6xl mx-auto px-4 h-16 flex items-center justify-between">
+      <div class="flex items-center gap-3">
+        <img src="logo.png" alt="ይሳኮር ቤቴ" class="w-10 h-10 rounded-xl object-contain bg-white p-1"/>
+        <div><h1 class="text-white font-bold text-lg leading-none">ይሳኮር ቤቴ</h1><p class="text-white/40 text-xs">Student Enrollment</p></div>
+      </div>
+      <div class="flex items-center gap-3">
+        ${session?.role==='owner'||session?.role==='admin'?`<button id="nav-students" class="px-3 py-1.5 rounded-xl text-sm font-medium text-white/60 hover:text-white hover:bg-white/10 transition-all">Students</button><button id="nav-admin" class="px-3 py-1.5 rounded-xl text-sm font-medium text-white/60 hover:text-white hover:bg-white/10 transition-all">Admin Panel</button>`:''}
+        <div class="flex items-center gap-2">
+          <span class="text-lg">${roleIcon[session?.role||'user']}</span>
+          <div class="hidden sm:block text-right">
+            <div class="text-white/80 text-sm font-medium">${session?.username||''}</div>
+            <span class="text-xs px-2 py-0.5 rounded-full border capitalize ${roleBadge[session?.role||'user']}">${session?.role||''}</span>
+          </div>
+        </div>
+        <button id="nav-logout" class="flex items-center gap-1.5 px-3 py-2 bg-white/10 hover:bg-white/20 text-white/70 hover:text-white rounded-xl transition-all text-sm border border-white/10">
+          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1"/></svg>
+          <span class="hidden sm:inline">Sign out</span>
+        </button>
+      </div>
+    </div>`
+  nav.querySelector('#nav-logout')?.addEventListener('click',()=>{ Auth.logout(); navigate(loginPage) })
+  nav.querySelector('#nav-students')?.addEventListener('click',()=>navigate(studentsPage))
+  nav.querySelector('#nav-admin')?.addEventListener('click',()=>navigate(adminPage))
+  return nav
+}
+</script>
+
+<script>
+// ═══════════════════════════════════════════
+// LOGIN PAGE
+// ═══════════════════════════════════════════
+function loginPage(){
+  const div=document.createElement('div')
+  div.className='min-h-screen flex items-center justify-center p-4'
+  div.innerHTML=`
+    <div class="absolute inset-0 overflow-hidden pointer-events-none">
+      <div class="absolute -top-40 -right-40 w-96 h-96 bg-purple-500/10 rounded-full blur-3xl"></div>
+      <div class="absolute -bottom-40 -left-40 w-96 h-96 bg-primary-500/10 rounded-full blur-3xl"></div>
+    </div>
+    <div class="relative w-full max-w-md slide-up">
+      <div class="text-center mb-8">
+        <div class="inline-flex items-center justify-center w-20 h-20 bg-white rounded-2xl mb-4 border border-white/20 overflow-hidden"><img src="logo.png" alt="logo" class="w-full h-full object-contain p-1"/></div>
+        <h1 class="text-3xl font-bold text-white mb-1">ይሳኮር ቤቴ</h1>
+        <p class="text-white/50 text-xs">ምዝገባ ስርዓት</p>
+      </div>
+      <div class="bg-white/10 backdrop-blur-md rounded-2xl border border-white/20 p-8 shadow-2xl">
+        <h2 class="text-xl font-semibold text-white mb-6">Sign in to continue</h2>
+        <div id="login-error" class="hidden mb-4 px-4 py-3 bg-red-500/20 border border-red-500/40 rounded-xl text-red-200 text-sm"></div>
+        <form id="login-form" class="space-y-4">
+          <div>
+            <label class="block text-white/70 text-sm font-medium mb-1.5">Username</label>
+            <input id="login-username" type="text" placeholder="Enter your username" required autofocus
+              class="w-full px-4 py-3 bg-white/10 border border-white/20 rounded-xl text-white placeholder-white/30 focus:outline-none focus:ring-2 focus:ring-primary-400 focus:border-transparent transition-all"/>
+          </div>
+          <div>
+            <label class="block text-white/70 text-sm font-medium mb-1.5">Password</label>
+            <div class="relative">
+              <input id="login-password" type="password" placeholder="Enter your password" required
+                class="w-full px-4 py-3 bg-white/10 border border-white/20 rounded-xl text-white placeholder-white/30 focus:outline-none focus:ring-2 focus:ring-primary-400 focus:border-transparent transition-all pr-12"/>
+              <button type="button" id="toggle-pw" class="absolute right-3 top-1/2 -translate-y-1/2 text-white/40 hover:text-white/70 transition-colors">👁️</button>
+            </div>
+          </div>
+          <button type="submit" id="login-btn"
+            class="w-full py-3 bg-primary-500 hover:bg-primary-400 text-white font-semibold rounded-xl transition-all shadow-lg shadow-primary-500/30 mt-2">
+            Sign In
+          </button>
+        </form>
+        <p class="text-center text-white/30 text-xs mt-6">ይሳኮር ቤቴ — Private Student Registry</p>
+        <div class="text-center mt-3">
+          <button id="reset-btn" class="text-white/20 hover:text-white/50 text-xs underline transition-colors">First time? Reset &amp; create owner account</button>
+        </div>
+      </div>
+    </div>`
+
+  div.querySelector('#reset-btn').addEventListener('click',()=>{
+    if(confirm('This will reset your owner account. All enrolled students will be kept. Continue?')){
+      // Only clear auth data, keep students and call history
+      localStorage.removeItem('yb_users')
+      localStorage.removeItem('yb_session')
+      localStorage.removeItem('yb_setup')
+      navigate(setupPage)
+    }
+  })
+
+  div.querySelector('#toggle-pw').addEventListener('click',function(){
+    const pw=div.querySelector('#login-password')
+    pw.type=pw.type==='password'?'text':'password'
+    this.textContent=pw.type==='password'?'👁️':'🙈'
+  })
+
+  div.querySelector('#login-form').addEventListener('submit',function(e){
+    e.preventDefault()
+    const u=div.querySelector('#login-username').value
+    const p=div.querySelector('#login-password').value
+    const errEl=div.querySelector('#login-error')
+    const btn=div.querySelector('#login-btn')
+    btn.textContent='Signing in...'
+    btn.disabled=true
+    setTimeout(()=>{
+      try{
+        Auth.login(u,p)
+        navigate(studentsPage)
+      }catch{
+        errEl.textContent='Invalid credentials. Please try again.'
+        errEl.classList.remove('hidden')
+        btn.textContent='Sign In'
+        btn.disabled=false
+      }
+    },400)
+  })
+  return div
+}
+
+// ═══════════════════════════════════════════
+// STUDENTS PAGE
+// ═══════════════════════════════════════════
+function studentsPage(){
+  if(!Auth.isPrivileged()){ navigate(loginPage); return document.createElement('div') }
+  const page=document.createElement('div')
+  page.className='min-h-screen'
+  page.appendChild(navbar())
+
+  const main=document.createElement('main')
+  main.className='max-w-6xl mx-auto px-4 py-8'
+  main.innerHTML=`
+    <div class="mb-6">
+      <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-4">
+        <div>
+          <h2 class="text-2xl font-bold text-white mb-1">Enrolled Students</h2>
+          <p class="text-white/50 text-sm">Manage and view the student registry</p>
+        </div>
+        <div class="flex gap-2">
+          <button id="call-history-btn" class="flex items-center gap-2 px-4 py-2.5 bg-white/10 hover:bg-white/20 border border-white/20 text-white/70 font-semibold rounded-xl transition-all text-sm">� Call History</button>
+          <button id="call-session-btn" class="flex items-center gap-2 px-4 py-2.5 bg-emerald-600/30 hover:bg-emerald-600/50 border border-emerald-500/40 text-emerald-300 font-semibold rounded-xl transition-all text-sm">📞 Start Call Session</button>
+        </div>
+      </div>
+      <div id="call-session-bar" class="hidden bg-white/5 border border-white/10 rounded-2xl p-4 animate-slide-down">
+        <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-3">
+          <div class="flex items-center gap-3">
+            <span class="text-emerald-400 font-semibold text-sm">📞 Call Session Active</span>
+            <span id="call-progress-text" class="text-white/50 text-xs"></span>
+          </div>
+          <div class="flex gap-2">
+            <button id="call-filter-btn" class="px-3 py-1.5 text-xs bg-white/10 hover:bg-white/20 text-white/70 rounded-lg transition-all border border-white/10">Show uncalled only</button>
+            <button id="call-reset-btn" class="px-3 py-1.5 text-xs bg-red-500/20 hover:bg-red-500/40 text-red-300 rounded-lg transition-all border border-red-500/30 owner-only">Reset Session</button>
+          </div>
+        </div>
+        <div class="w-full bg-white/10 rounded-full h-2 mb-2">
+          <div id="call-progress-bar" class="bg-emerald-500 h-2 rounded-full transition-all duration-500" style="width:0%"></div>
+        </div>
+        <div class="grid grid-cols-2 sm:grid-cols-4 gap-2 mt-2">
+          <div class="bg-white/5 border border-white/10 rounded-xl p-3 text-center">
+            <div class="text-2xl font-bold text-white" id="call-count-pending">0</div>
+            <div class="text-white/40 text-xs mt-1">⬜ Not Called</div>
+          </div>
+          <div class="bg-emerald-500/10 border border-emerald-500/20 rounded-xl p-3 text-center">
+            <div class="text-2xl font-bold text-emerald-300" id="call-count-answered">0</div>
+            <div class="text-emerald-400/60 text-xs mt-1">✅ Answered</div>
+          </div>
+          <div class="bg-red-500/10 border border-red-500/20 rounded-xl p-3 text-center">
+            <div class="text-2xl font-bold text-red-300" id="call-count-missed">0</div>
+            <div class="text-red-400/60 text-xs mt-1">❌ Not Answered</div>
+          </div>
+          <div class="bg-primary-500/10 border border-primary-500/20 rounded-xl p-3 text-center">
+            <div class="text-2xl font-bold text-primary-300" id="call-count-total">0</div>
+            <div class="text-primary-400/60 text-xs mt-1">📋 Total</div>
+          </div>
+        </div>
+        <div class="flex gap-2 mt-3">
+          <button id="call-filter-btn" class="px-3 py-1.5 text-xs bg-white/10 hover:bg-white/20 text-white/70 rounded-lg transition-all border border-white/10">Show uncalled only</button>
+          <button id="call-reset-btn" class="hidden px-3 py-1.5 text-xs bg-red-500/20 hover:bg-red-500/40 text-red-300 rounded-lg transition-all border border-red-500/30">Reset Session</button>
+        </div>
+      </div>
+    </div>
+    <div class="flex flex-col sm:flex-row gap-4 mb-6">
+      <div class="flex-1 relative">
+        <div class="absolute inset-y-0 left-4 flex items-center pointer-events-none">
+          <svg class="w-5 h-5 text-white/40" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/></svg>
+        </div>
+        <input id="search-input" type="text" placeholder="Search by name, department, or year..."
+          class="w-full pl-12 pr-10 py-3 bg-white/10 border border-white/20 rounded-xl text-white placeholder-white/30 focus:outline-none focus:ring-2 focus:ring-primary-400 focus:border-transparent transition-all"/>
+        <button id="search-clear" class="hidden absolute inset-y-0 right-3 flex items-center text-white/40 hover:text-white/70 transition-colors">
+          <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
+        </button>
+      </div>
+      <button id="enroll-toggle" class="flex items-center gap-2 px-5 py-2.5 bg-primary-500 hover:bg-primary-400 text-white font-semibold rounded-xl transition-all shadow-lg shadow-primary-500/30 whitespace-nowrap">
+        <svg id="enroll-icon" class="w-5 h-5 transition-transform duration-200" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/></svg>
+        Enroll Student
+      </button>
+      <label class="flex items-center gap-2 px-5 py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white font-semibold rounded-xl transition-all shadow-lg shadow-emerald-600/30 whitespace-nowrap cursor-pointer" title="Import students from CSV or Excel file">
+        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"/></svg>
+        Import CSV
+        <input id="csv-import" type="file" accept=".csv,.txt" class="hidden"/>
+      </label>
+    </div>
+    <div id="enroll-form-wrap" class="hidden mb-6"></div>
+    <div id="import-result" class="hidden mb-6"></div>
+    <div id="student-list"></div>`
+
+  page.appendChild(main)
+
+  let searchQuery=''
+  let enrollOpen=false
+
+  function renderStudents(){
+    const all=DB.getStudents().sort((a,b)=>b.graduationYear-a.graduationYear)
+    const callSession=DB.getCallSession()
+    let filtered=searchQuery?all.filter(s=>
+      s.fullName.toLowerCase().includes(searchQuery.toLowerCase())||
+      (s.fatherName||'').toLowerCase().includes(searchQuery.toLowerCase())||
+      s.department.toLowerCase().includes(searchQuery.toLowerCase())||
+      String(s.graduationYear).includes(searchQuery)
+    ):all
+    if(showUncalledOnly) filtered=filtered.filter(s=>!callSession[s.id]||callSession[s.id]==='pending')
+    const list=main.querySelector('#student-list')
+    if(filtered.length===0){
+      list.innerHTML=`<div class="flex flex-col items-center justify-center py-20 text-center fade-in">
+        <div class="text-6xl mb-4">${searchQuery?'🔍':'🎓'}</div>
+        <h3 class="text-white/70 font-semibold text-lg mb-1">${searchQuery?'No results found':'No students enrolled yet'}</h3>
+        <p class="text-white/40 text-sm">${searchQuery?'Try a different search term':'Use the "Enroll Student" button to add the first student'}</p>
+      </div>`
+      return
+    }
+    const genderBadge={Male:'bg-blue-500/20 text-blue-300 border-blue-500/30',Female:'bg-pink-500/20 text-pink-300 border-pink-500/30',Other:'bg-purple-500/20 text-purple-300 border-purple-500/30'}
+    const callActive=window.callSessionActive||false
+    const callStatusColors={'answered':'bg-emerald-500/20 text-emerald-300 border-emerald-500/30','missed':'bg-red-500/20 text-red-300 border-red-500/30','pending':'bg-white/10 text-white/40 border-white/20'}
+    const callStatusLabels={'answered':'✅ Answered','missed':'❌ Not Answered','pending':'⬜ Not Called'}
+    list.innerHTML=`
+      <p class="text-white/40 text-sm mb-3">${filtered.length} student${filtered.length!==1?'s':''} found</p>
+      <div class="overflow-x-auto rounded-2xl border border-white/10">
+        <table class="w-full text-sm">
+          <thead>
+            <tr class="bg-white/10 text-white/50 uppercase text-xs tracking-wide">
+              <th class="px-4 py-3 text-left">#</th>
+              <th class="px-4 py-3 text-left">Full Name</th>
+              <th class="px-8 py-3 text-left">Gender</th>
+              <th class="px-8 py-3 text-left">Department</th>
+              <th class="px-4 py-3 text-left">Grad Year</th>
+              <th class="px-4 py-3 text-left">Phone</th>
+              <th class="px-4 py-3 text-left" id="call-col-header" style="display:none">Call</th>
+              <th class="px-4 py-3 text-left"></th>
+            </tr>
+          </thead>
+          <tbody>
+            ${filtered.map((s,i)=>`
+              <tr class="border-t border-white/5 hover:bg-white/5 transition-colors">
+                <td class="px-4 py-3 text-white/30">${i+1}</td>
+                <td class="px-4 py-3">
+                  <div class="flex items-center gap-2">
+                    <div class="w-8 h-8 rounded-lg bg-gradient-to-br from-primary-500 to-purple-500 flex items-center justify-center text-white font-bold text-sm flex-shrink-0">${s.fullName.charAt(0).toUpperCase()}</div>
+                    <span class="text-white font-medium">${s.fullName}${s.fatherName?' '+s.fatherName:''}</span>
+                  </div>
+                </td>
+                <td class="px-8 py-3"><span class="px-2 py-0.5 rounded-full text-xs font-medium border ${genderBadge[s.gender]||'bg-white/10 text-white/60 border-white/20'}">${s.gender}</span></td>
+                <td class="px-8 py-3 text-white/70">${s.department}</td>
+                <td class="px-4 py-3 text-primary-300 font-bold">${s.graduationYear}</td>
+                <td class="px-4 py-3"><a href="tel:${s.phoneNumber}" class="text-primary-300 hover:text-primary-200 hover:underline transition-colors">${s.phoneNumber}</a></td>
+                <td class="px-4 py-3">
+                  <button onclick="editStudent('${s.id}')" class="p-1.5 rounded-lg bg-white/10 hover:bg-primary-500/30 text-white/50 hover:text-primary-300 transition-all" title="Edit">✏️</button>
+                </td>
+                ${callActive?`<td class="px-4 py-3">
+                  <button onclick="cycleCallStatus('${s.id}')" class="px-2 py-1 text-xs rounded-lg border transition-all ${callStatusColors[callSession[s.id]||'pending']}">${callStatusLabels[callSession[s.id]||'pending']}</button>
+                </td>`:'<td></td>'}
+              </tr>`).join('')}
+          </tbody>
+        </table>
+      </div>`
+  }
+
+  renderStudents()
+
+  // ── Call Session ──
+  const isOwner=Auth.current()?.role==='owner'
+
+  function updateCallBar(){
+    const session=DB.getCallSession()
+    const all=DB.getStudents()
+    const answered=Object.values(session).filter(v=>v==='answered').length
+    const missed=Object.values(session).filter(v=>v==='missed').length
+    const total=all.length
+    const called=answered+missed
+    const pct=total?Math.round(called/total*100):0
+    const bar=main.querySelector('#call-progress-bar')
+    const txt=main.querySelector('#call-progress-text')
+    const ca=main.querySelector('#call-count-answered')
+    const cm=main.querySelector('#call-count-missed')
+    const cp=main.querySelector('#call-count-pending')
+    const ct=main.querySelector('#call-count-total')
+    if(bar) bar.style.width=pct+'%'
+    if(txt) txt.textContent=`${called}/${total} called (${pct}%)`
+    if(ca) ca.textContent=answered
+    if(cm) cm.textContent=missed
+    if(cp) cp.textContent=total-called
+    if(ct) ct.textContent=total
+  }
+
+  window.cycleCallStatus=function(id){
+    const session=DB.getCallSession()
+    const cur=session[id]||'pending'
+    const next={pending:'answered',answered:'missed',missed:'pending'}
+    session[id]=next[cur]
+    DB.saveCallSession(session)
+    renderStudents()
+    updateCallBar()
+  }
+
+  const callBtn=main.querySelector('#call-session-btn')
+  const callBar=main.querySelector('#call-session-bar')
+  const callColHeader=main.querySelector('#call-col-header')
+  const callResetBtn=main.querySelector('#call-reset-btn')
+
+  // show reset only for owner
+  if(isOwner && callResetBtn) callResetBtn.classList.remove('hidden')
+
+  // restore state
+  if(window.callSessionActive){
+    callBar.classList.remove('hidden')
+    if(callColHeader) callColHeader.style.display=''
+    if(isOwner){
+      callBtn.textContent='📞 End Call Session'
+      callBtn.className='flex items-center gap-2 px-4 py-2.5 bg-red-600/30 hover:bg-red-600/50 border border-red-500/40 text-red-300 font-semibold rounded-xl transition-all text-sm'
+    }
+    updateCallBar()
+  }
+
+  callBtn.addEventListener('click',()=>{
+    if(!isOwner && window.callSessionActive){
+      toast('Only the owner can end a call session','error'); return
+    }
+    window.callSessionActive=!window.callSessionActive
+    if(window.callSessionActive){
+      callBar.classList.remove('hidden')
+      if(callColHeader) callColHeader.style.display=''
+      if(isOwner){
+        callBtn.textContent='📞 End Call Session'
+        callBtn.className='flex items-center gap-2 px-4 py-2.5 bg-red-600/30 hover:bg-red-600/50 border border-red-500/40 text-red-300 font-semibold rounded-xl transition-all text-sm'
+      }
+      updateCallBar()
+    } else {
+      // save to history
+      const session=DB.getCallSession()
+      const history=JSON.parse(localStorage.getItem('yb_call_history')||'[]')
+      const students=DB.getStudents()
+      const answered=students.filter(s=>session[s.id]==='answered').map(s=>s.fullName+(s.fatherName?' '+s.fatherName:''))
+      const missed=students.filter(s=>session[s.id]==='missed').map(s=>s.fullName+(s.fatherName?' '+s.fatherName:''))
+      history.unshift({date:new Date().toLocaleString(),answered:answered.length,missed:missed.length,total:students.length,answeredNames:answered,missedNames:missed})
+      localStorage.setItem('yb_call_history',JSON.stringify(history.slice(0,20)))
+      callBar.classList.add('hidden')
+      if(callColHeader) callColHeader.style.display='none'
+      callBtn.textContent='📞 Start Call Session'
+      callBtn.className='flex items-center gap-2 px-4 py-2.5 bg-emerald-600/30 hover:bg-emerald-600/50 border border-emerald-500/40 text-emerald-300 font-semibold rounded-xl transition-all text-sm'
+      toast('Call session saved to history','success')
+    }
+    renderStudents()
+  })
+
+  if(callResetBtn) callResetBtn.addEventListener('click',()=>{
+    if(!isOwner){ toast('Only the owner can reset a call session','error'); return }
+    if(confirm('Reset all call statuses? This cannot be undone.')){
+      DB.clearCallSession()
+      renderStudents()
+      updateCallBar()
+      toast('Call session reset','info')
+    }
+  })
+
+  // Call History modal
+  main.querySelector('#call-history-btn').addEventListener('click',()=>{
+    const history=JSON.parse(localStorage.getItem('yb_call_history')||'[]')
+    const overlay=document.createElement('div')
+    overlay.className='fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm fade-in'
+    overlay.innerHTML=`
+      <div class="bg-primary-900 border border-white/20 rounded-2xl p-6 w-full max-w-2xl mx-4 shadow-2xl slide-up max-h-[80vh] flex flex-col">
+        <div class="flex items-center justify-between mb-5">
+          <h3 class="text-white font-semibold text-lg">📋 Call Session History</h3>
+          <button id="hist-close" class="text-white/40 hover:text-white text-2xl">×</button>
+        </div>
+        <div class="overflow-y-auto flex-1">
+          ${history.length===0?'<p class="text-white/40 text-center py-8">No call sessions recorded yet.</p>':
+          history.map((h,i)=>`
+            <div class="bg-white/5 border border-white/10 rounded-xl p-4 mb-3">
+              <div class="flex items-center justify-between mb-2">
+                <span class="text-white/70 text-sm font-medium">Session ${history.length-i}</span>
+                <span class="text-white/40 text-xs">${h.date}</span>
+              </div>
+              <div class="grid grid-cols-3 gap-3 mb-3">
+                <div class="text-center"><div class="text-xl font-bold text-emerald-300">${h.answered}</div><div class="text-xs text-white/40">✅ Answered</div></div>
+                <div class="text-center"><div class="text-xl font-bold text-red-300">${h.missed}</div><div class="text-xs text-white/40">❌ Not Answered</div></div>
+                <div class="text-center"><div class="text-xl font-bold text-white/60">${h.total}</div><div class="text-xs text-white/40">📋 Total</div></div>
+              </div>
+              ${h.missedNames&&h.missedNames.length>0?`<details class="mt-1"><summary class="text-red-300/70 text-xs cursor-pointer hover:text-red-300">Show ${h.missedNames.length} not answered</summary><div class="mt-2 flex flex-wrap gap-1">${h.missedNames.map(n=>`<span class="px-2 py-0.5 bg-red-500/10 border border-red-500/20 rounded text-red-300 text-xs">${n}</span>`).join('')}</div></details>`:''}
+            </div>`).join('')}
+        </div>
+      </div>`
+    document.body.appendChild(overlay)
+    overlay.querySelector('#hist-close').onclick=()=>overlay.remove()
+    overlay.addEventListener('click',e=>{ if(e.target===overlay) overlay.remove() })
+  })
+
+  let showUncalledOnly=false
+  main.querySelector('#call-filter-btn').addEventListener('click',function(){
+    showUncalledOnly=!showUncalledOnly
+    this.textContent=showUncalledOnly?'Show all':'Show uncalled only'
+    this.className=showUncalledOnly
+      ?'px-3 py-1.5 text-xs bg-primary-500/30 text-primary-300 rounded-lg transition-all border border-primary-500/40'
+      :'px-3 py-1.5 text-xs bg-white/10 hover:bg-white/20 text-white/70 rounded-lg transition-all border border-white/10'
+    renderStudents()
+  })
+
+  const searchInput=main.querySelector('#search-input')
+  const searchClear=main.querySelector('#search-clear')
+  let searchTimer
+  searchInput.addEventListener('input',function(){
+    clearTimeout(searchTimer)
+    searchQuery=this.value
+    searchClear.classList.toggle('hidden',!this.value)
+    searchTimer=setTimeout(renderStudents,300)
+  })
+  searchClear.addEventListener('click',()=>{ searchInput.value=''; searchQuery=''; searchClear.classList.add('hidden'); renderStudents() })
+
+  // CSV Import
+  main.querySelector('#csv-import').addEventListener('change', function(e) {
+    const file = e.target.files[0]
+    if (!file) return
+    const reader = new FileReader()
+    reader.onload = function(ev) {
+      const text = ev.target.result
+      const lines = text.split(/\r?\n/).filter(l => l.trim())
+      if (lines.length < 2) { toast('File is empty or has no data rows', 'error'); return }
+
+      // Detect header row
+      const header = lines[0].toLowerCase().split(',').map(h => h.trim().replace(/"/g,''))
+      const colMap = {}
+      header.forEach((h, i) => {
+        if (h.includes('full') || h.includes('name')) colMap.fullName = i
+        if (h.includes('dept') || h.includes('department')) colMap.department = i
+        if (h.includes('year') || h.includes('grad')) colMap.graduationYear = i
+        if (h.includes('gender') || h.includes('sex')) colMap.gender = i
+        if (h.includes('phone') || h.includes('mobile') || h.includes('tel')) colMap.phoneNumber = i
+      })
+
+      // Fallback: assume fixed order if headers not detected
+      // fullName, department, graduationYear, gender, phoneNumber
+      if (Object.keys(colMap).length < 3) {
+        colMap.fullName = 0; colMap.department = 1; colMap.graduationYear = 2; colMap.gender = 3; colMap.phoneNumber = 4
+      }
+
+      const VALID_GENDERS = ['male','female','other']
+      const PHONE_RE = /^\+?[\d\s\-().]{7,20}$/
+      const students = DB.getStudents()
+      const session = Auth.current()
+      let imported = 0, skipped = 0, errors = []
+
+      for (let i = 1; i < lines.length; i++) {
+        const cols = lines[i].split(',').map(c => c.trim().replace(/^"|"$/g,''))
+        const fullName = cols[colMap.fullName] || ''
+        const department = cols[colMap.department] || ''
+        const graduationYear = parseInt(cols[colMap.graduationYear])
+        const rawGender = (cols[colMap.gender] || '').trim()
+        const gender = rawGender.charAt(0).toUpperCase() + rawGender.slice(1).toLowerCase()
+        const phoneNumber = cols[colMap.phoneNumber] || ''
+
+        if (!fullName || !department) { skipped++; errors.push(`Row ${i+1}: missing name or department`); continue }
+        if (isNaN(graduationYear) || graduationYear < 1000 || graduationYear > 9999) { skipped++; errors.push(`Row ${i+1}: invalid year for "${fullName}"`); continue }
+        if (!VALID_GENDERS.includes(gender.toLowerCase())) { skipped++; errors.push(`Row ${i+1}: invalid gender "${rawGender}" for "${fullName}"`); continue }
+        if (!phoneNumber || !PHONE_RE.test(phoneNumber)) { skipped++; errors.push(`Row ${i+1}: invalid phone for "${fullName}"`); continue }
+
+        students.push({
+          id: 's-' + Date.now() + '-' + i,
+          fullName, department, graduationYear, gender, phoneNumber,
+          enrolledAt: new Date().toISOString(),
+          enrolledBy: session?.id || 'import'
+        })
+        imported++
+      }
+
+      DB.saveStudents(students)
+
+      const resultEl = main.querySelector('#import-result')
+      resultEl.classList.remove('hidden')
+      resultEl.innerHTML = `<div class="bg-white/10 border border-white/20 rounded-2xl p-5 fade-in">
+        <div class="flex items-center gap-3 mb-3">
+          <span class="text-2xl">${imported > 0 ? '✅' : '⚠️'}</span>
+          <div>
+            <p class="text-white font-semibold">Import Complete</p>
+            <p class="text-white/60 text-sm">${imported} students imported${skipped > 0 ? `, ${skipped} skipped` : ''}</p>
+          </div>
+          <button onclick="this.closest('#import-result').classList.add('hidden')" class="ml-auto text-white/40 hover:text-white/70 text-xl">×</button>
+        </div>
+        ${errors.length > 0 ? `<details class="mt-2"><summary class="text-white/50 text-xs cursor-pointer hover:text-white/70">Show ${errors.length} skipped rows</summary><ul class="mt-2 space-y-1">${errors.slice(0,20).map(e=>`<li class="text-red-300 text-xs">• ${e}</li>`).join('')}${errors.length>20?`<li class="text-white/40 text-xs">...and ${errors.length-20} more</li>`:''}</ul></details>` : ''}
+      </div>`
+
+      if (imported > 0) toast(`${imported} students imported successfully!`, 'success')
+      else toast('No students were imported. Check your file format.', 'error')
+      renderStudents()
+      this.value = ''
+    }
+    reader.readAsText(file)
+  })
+
+  const enrollToggle=main.querySelector('#enroll-toggle')
+  const enrollIcon=main.querySelector('#enroll-icon')
+  const enrollWrap=main.querySelector('#enroll-form-wrap')
+
+  enrollToggle.addEventListener('click',()=>{
+    enrollOpen=!enrollOpen
+    enrollIcon.style.transform=enrollOpen?'rotate(45deg)':''
+    if(enrollOpen){
+      enrollWrap.classList.remove('hidden')
+      enrollWrap.innerHTML=''
+      enrollWrap.appendChild(enrollForm(()=>{ enrollOpen=false; enrollIcon.style.transform=''; enrollWrap.classList.add('hidden'); enrollWrap.innerHTML=''; renderStudents() }))
+    } else {
+      enrollWrap.classList.add('hidden')
+      enrollWrap.innerHTML=''
+    }
+  })
+
+  return page
+}
+</script>
+
+<script>
+// ═══════════════════════════════════════════
+// ENROLLMENT FORM
+// ═══════════════════════════════════════════
+function enrollForm(onDone){
+  const wrap=document.createElement('div')
+  wrap.className='bg-white/10 backdrop-blur-md border border-white/20 rounded-2xl p-6 slide-down'
+  wrap.innerHTML=`
+    <h3 class="text-white font-semibold text-lg mb-5">New Student Enrollment</h3>
+    <form id="ef" class="grid grid-cols-1 md:grid-cols-2 gap-4">
+      <div>
+        <label class="block text-white/70 text-sm font-medium mb-1.5">Full Name</label>
+        <input name="fullName" type="text" placeholder="e.g. Abebe Kebede" class="w-full px-4 py-2.5 bg-white/10 border border-white/20 rounded-xl text-white placeholder-white/30 focus:outline-none focus:ring-2 focus:ring-primary-400 focus:border-transparent transition-all"/>
+        <p class="ef-err hidden mt-1 text-red-400 text-xs" data-field="fullName"></p>
+      </div>
+      <div>
+        <label class="block text-white/70 text-sm font-medium mb-1.5">Department</label>
+        <input name="department" type="text" placeholder="e.g. Computer Science" class="w-full px-4 py-2.5 bg-white/10 border border-white/20 rounded-xl text-white placeholder-white/30 focus:outline-none focus:ring-2 focus:ring-primary-400 focus:border-transparent transition-all"/>
+        <p class="ef-err hidden mt-1 text-red-400 text-xs" data-field="department"></p>
+      </div>
+      <div>
+        <label class="block text-white/70 text-sm font-medium mb-1.5">Graduation Year</label>
+        <input name="graduationYear" type="number" placeholder="e.g. 2026" min="1900" max="2100" class="w-full px-4 py-2.5 bg-white/10 border border-white/20 rounded-xl text-white placeholder-white/30 focus:outline-none focus:ring-2 focus:ring-primary-400 focus:border-transparent transition-all"/>
+        <p class="ef-err hidden mt-1 text-red-400 text-xs" data-field="graduationYear"></p>
+      </div>
+      <div>
+        <label class="block text-white/70 text-sm font-medium mb-1.5">Gender</label>
+        <select name="gender" class="w-full px-4 py-2.5 bg-white/10 border border-white/20 rounded-xl text-white focus:outline-none focus:ring-2 focus:ring-primary-400 focus:border-transparent transition-all">
+          <option value="">Select gender</option>
+          <option value="Male">Male</option>
+          <option value="Female">Female</option>
+        </select>
+        <p class="ef-err hidden mt-1 text-red-400 text-xs" data-field="gender"></p>
+      </div>
+      <div class="md:col-span-2">
+        <label class="block text-white/70 text-sm font-medium mb-1.5">Phone Number</label>
+        <input name="phoneNumber" type="tel" placeholder="e.g. +251 91 234 5678" class="w-full px-4 py-2.5 bg-white/10 border border-white/20 rounded-xl text-white placeholder-white/30 focus:outline-none focus:ring-2 focus:ring-primary-400 focus:border-transparent transition-all"/>
+        <p class="ef-err hidden mt-1 text-red-400 text-xs" data-field="phoneNumber"></p>
+      </div>
+      <div class="md:col-span-2 flex gap-3 pt-2">
+        <button type="submit" id="ef-submit" class="flex-1 py-3 bg-primary-500 hover:bg-primary-400 text-white font-semibold rounded-xl transition-all">Enroll Student</button>
+        <button type="button" id="ef-cancel" class="px-6 py-3 bg-white/10 hover:bg-white/20 text-white font-semibold rounded-xl transition-all border border-white/20">Cancel</button>
+      </div>
+    </form>`
+
+  wrap.querySelector('#ef-cancel').addEventListener('click', onDone)
+
+  wrap.querySelector('#ef').addEventListener('submit',function(e){
+    e.preventDefault()
+    const fd=new FormData(this)
+    const data={fullName:fd.get('fullName'),department:fd.get('department'),graduationYear:Number(fd.get('graduationYear')),gender:fd.get('gender'),phoneNumber:fd.get('phoneNumber')}
+    const errors={}
+    if(!data.fullName?.trim()) errors.fullName='Full name is required'
+    if(!data.department?.trim()) errors.department='Department is required'
+    if(!data.graduationYear||data.graduationYear<1000||data.graduationYear>9999) errors.graduationYear='Enter a valid 4-digit year'
+    if(!data.gender) errors.gender='Please select a gender'
+    if(!data.phoneNumber||!/^\+?[\d\s\-().]{7,20}$/.test(data.phoneNumber)) errors.phoneNumber='Enter a valid phone number'
+
+    wrap.querySelectorAll('.ef-err').forEach(el=>{ el.classList.add('hidden'); el.textContent='' })
+    if(Object.keys(errors).length>0){
+      Object.entries(errors).forEach(([f,msg])=>{
+        const el=wrap.querySelector(`.ef-err[data-field="${f}"]`)
+        if(el){ el.textContent=msg; el.classList.remove('hidden') }
+      })
+      return
+    }
+
+    const btn=wrap.querySelector('#ef-submit')
+    btn.textContent='Enrolling...'
+    btn.disabled=true
+    setTimeout(()=>{
+      const students=DB.getStudents()
+      const name=data.fullName.trim().toLowerCase()
+      const phone=data.phoneNumber.trim()
+      const duplicate=students.find(s=>
+        s.fullName.toLowerCase()===name ||
+        (s.phoneNumber&&s.phoneNumber===phone)
+      )
+      if(duplicate){
+        btn.textContent='Enroll Student'
+        btn.disabled=false
+        const errEl=wrap.querySelector('.ef-err[data-field="fullName"]')
+        if(errEl){ errEl.textContent=`"${duplicate.fullName}" is already enrolled!`; errEl.classList.remove('hidden') }
+        toast(`${duplicate.fullName} is already enrolled!`,'error')
+        return
+      }
+      students.push({id:'s-'+Date.now(),fullName:data.fullName.trim(),fatherName:(data.fatherName||'').trim(),department:data.department.trim(),graduationYear:data.graduationYear,gender:data.gender,phoneNumber:phone,enrolledAt:new Date().toISOString(),enrolledBy:Auth.current()?.id})
+      DB.saveStudents(students)
+      toast(`${data.fullName} enrolled successfully!`,'success')
+      onDone()
+    },400)
+  })
+  return wrap
+}
+
+// ═══════════════════════════════════════════
+// EDIT STUDENT
+// ═══════════════════════════════════════════
+window.editStudent=function(id){
+  const students=DB.getStudents()
+  const s=students.find(s=>s.id===id)
+  if(!s) return
+  const overlay=document.createElement('div')
+  overlay.className='fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm fade-in'
+  overlay.innerHTML=`
+    <div class="bg-primary-900 border border-white/20 rounded-2xl p-6 w-full max-w-lg mx-4 shadow-2xl slide-up">
+      <div class="flex items-center justify-between mb-5">
+        <h3 class="text-white font-semibold text-lg">Edit Student</h3>
+        <button id="edit-close" class="text-white/40 hover:text-white text-2xl leading-none">×</button>
+      </div>
+      <form id="edit-form" class="grid grid-cols-2 gap-4">
+        <div>
+          <label class="block text-white/60 text-xs mb-1">First Name</label>
+          <input name="fullName" value="${s.fullName}" class="w-full px-3 py-2 bg-white/10 border border-white/20 rounded-xl text-white text-sm focus:outline-none focus:ring-2 focus:ring-primary-400"/>
+        </div>
+        <div>
+          <label class="block text-white/60 text-xs mb-1">Father's Name</label>
+          <input name="fatherName" value="${s.fatherName||''}" class="w-full px-3 py-2 bg-white/10 border border-white/20 rounded-xl text-white text-sm focus:outline-none focus:ring-2 focus:ring-primary-400"/>
+        </div>
+        <div>
+          <label class="block text-white/60 text-xs mb-1">Department</label>
+          <input name="department" value="${s.department}" class="w-full px-3 py-2 bg-white/10 border border-white/20 rounded-xl text-white text-sm focus:outline-none focus:ring-2 focus:ring-primary-400"/>
+        </div>
+        <div>
+          <label class="block text-white/60 text-xs mb-1">Grad Year</label>
+          <input name="graduationYear" type="number" value="${s.graduationYear}" class="w-full px-3 py-2 bg-white/10 border border-white/20 rounded-xl text-white text-sm focus:outline-none focus:ring-2 focus:ring-primary-400"/>
+        </div>
+        <div>
+          <label class="block text-white/60 text-xs mb-1">Gender</label>
+          <select name="gender" class="w-full px-3 py-2 bg-white/10 border border-white/20 rounded-xl text-white text-sm focus:outline-none focus:ring-2 focus:ring-primary-400">
+            <option value="Male" ${s.gender==='Male'?'selected':''}>Male</option>
+            <option value="Female" ${s.gender==='Female'?'selected':''}>Female</option>
+          </select>
+        </div>
+        <div>
+          <label class="block text-white/60 text-xs mb-1">Phone</label>
+          <input name="phoneNumber" value="${s.phoneNumber}" class="w-full px-3 py-2 bg-white/10 border border-white/20 rounded-xl text-white text-sm focus:outline-none focus:ring-2 focus:ring-primary-400"/>
+        </div>
+        <div class="col-span-2 flex gap-3 pt-2">
+          <button type="submit" class="flex-1 py-2.5 bg-primary-500 hover:bg-primary-400 text-white font-semibold rounded-xl transition-all text-sm">Save Changes</button>
+          <button type="button" id="edit-cancel" class="px-5 py-2.5 bg-white/10 hover:bg-white/20 text-white rounded-xl transition-all border border-white/20 text-sm">Cancel</button>
+        </div>
+      </form>
+    </div>`
+  document.body.appendChild(overlay)
+  overlay.querySelector('#edit-close').onclick=()=>overlay.remove()
+  overlay.querySelector('#edit-cancel').onclick=()=>overlay.remove()
+  overlay.addEventListener('click',e=>{ if(e.target===overlay) overlay.remove() })
+  overlay.querySelector('#edit-form').addEventListener('submit',function(e){
+    e.preventDefault()
+    const fd=new FormData(this)
+    const idx=students.findIndex(x=>x.id===id)
+    if(idx===-1) return
+    students[idx]={...students[idx],
+      fullName:fd.get('fullName').trim(),
+      fatherName:fd.get('fatherName').trim(),
+      department:fd.get('department').trim(),
+      graduationYear:Number(fd.get('graduationYear')),
+      gender:fd.get('gender'),
+      phoneNumber:fd.get('phoneNumber').trim()
+    }
+    DB.saveStudents(students)
+    overlay.remove()
+    // re-render
+    if(window.currentPage) window.currentPage()
+    navigate(studentsPage)
+    toast('Student updated successfully!','success')
+  })
+}
+
+// ═══════════════════════════════════════════
+// ADMIN PAGE
+// ═══════════════════════════════════════════
+function adminPage(){
+  if(!Auth.isPrivileged()){ navigate(loginPage); return document.createElement('div') }
+  const page=document.createElement('div')
+  page.className='min-h-screen'
+  page.appendChild(navbar())
+
+  const main=document.createElement('main')
+  main.className='max-w-4xl mx-auto px-4 py-8'
+  page.appendChild(main)
+
+  function renderAdmin(){
+    const users=DB.getUsers()
+    const session=Auth.current()
+    const roleBadge={owner:'bg-amber-500/20 text-amber-300 border-amber-500/30',admin:'bg-primary-500/20 text-primary-300 border-primary-500/30',user:'bg-white/10 text-white/50 border-white/20'}
+    const roleIcon={owner:'👑',admin:'🛡️',user:'👤'}
+
+    main.innerHTML=`
+      <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-8">
+        <div><h2 class="text-2xl font-bold text-white mb-1">Admin Panel</h2><p class="text-white/50 text-sm">Manage users and privileges</p></div>
+        <button id="add-user-btn" class="flex items-center gap-2 px-5 py-2.5 bg-primary-500 hover:bg-primary-400 text-white font-semibold rounded-xl transition-all shadow-lg shadow-primary-500/30">
+          <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/></svg>Add User
+        </button>
+      </div>
+      <div id="add-user-form" class="hidden mb-6 bg-white/10 backdrop-blur-md border border-white/20 rounded-2xl p-6 slide-down">
+        <h3 class="text-white font-semibold mb-4">Create New User</h3>
+        <form id="reg-form" class="flex flex-col sm:flex-row gap-3">
+          <input id="reg-username" type="text" placeholder="Username" required class="flex-1 px-4 py-2.5 bg-white/10 border border-white/20 rounded-xl text-white placeholder-white/30 focus:outline-none focus:ring-2 focus:ring-primary-400 focus:border-transparent"/>
+          <input id="reg-password" type="password" placeholder="Password" required class="flex-1 px-4 py-2.5 bg-white/10 border border-white/20 rounded-xl text-white placeholder-white/30 focus:outline-none focus:ring-2 focus:ring-primary-400 focus:border-transparent"/>
+          <button type="submit" class="px-6 py-2.5 bg-primary-500 hover:bg-primary-400 text-white font-semibold rounded-xl transition-all">Create</button>
+          <button type="button" id="reg-cancel" class="px-4 py-2.5 bg-white/10 hover:bg-white/20 text-white/70 rounded-xl transition-all border border-white/20">Cancel</button>
+        </form>
+      </div>
+      <div class="grid grid-cols-3 gap-4 mb-6">
+        ${[{l:'Total Users',v:users.length,i:'👥'},{l:'Admins',v:users.filter(u=>u.role==='admin').length,i:'🛡️'},{l:'Regular Users',v:users.filter(u=>u.role==='user').length,i:'👤'}].map(s=>`
+          <div class="bg-white/5 border border-white/10 rounded-2xl p-4 text-center">
+            <div class="text-2xl mb-1">${s.i}</div>
+            <div class="text-2xl font-bold text-white">${s.v}</div>
+            <div class="text-white/40 text-xs">${s.l}</div>
+          </div>`).join('')}
+      </div>
+      <div id="user-list" class="space-y-3">
+        ${users.map(u=>`
+          <div class="bg-white/5 border ${u.id===session?.id?'border-primary-500/40':'border-white/10'} rounded-2xl p-5 fade-in">
+            <div class="flex flex-col sm:flex-row sm:items-center gap-4">
+              <div class="flex-shrink-0 w-12 h-12 rounded-xl bg-gradient-to-br from-primary-600 to-purple-600 flex items-center justify-center text-white font-bold text-lg">${u.username.charAt(0).toUpperCase()}</div>
+              <div class="flex-1 min-w-0">
+                <div class="flex flex-wrap items-center gap-2 mb-0.5">
+                  <span class="text-white font-semibold">${u.username}</span>
+                  ${u.id===session?.id?'<span class="text-xs text-primary-400 font-medium">(you)</span>':''}
+                </div>
+                <div class="flex items-center gap-2">
+                  <span class="text-lg">${roleIcon[u.role]}</span>
+                  <span class="text-xs px-2 py-0.5 rounded-full border capitalize font-medium ${roleBadge[u.role]}">${u.role}</span>
+                  <span class="text-white/30 text-xs">Joined ${new Date(u.createdAt).toLocaleDateString()}</span>
+                </div>
+              </div>
+              ${u.id!==session?.id?`<div class="flex flex-wrap gap-2" id="actions-${u.id}">
+                ${u.role==='user'?`<button onclick="grantAdmin('${u.id}')" class="px-3 py-1.5 text-xs font-medium rounded-lg border bg-primary-500/20 hover:bg-primary-500/40 text-primary-300 border-primary-500/30 transition-all">Grant Admin</button>`:''}
+                ${u.role==='admin'&&session?.role==='owner'?`<button onclick="revokeAdmin('${u.id}')" class="px-3 py-1.5 text-xs font-medium rounded-lg border bg-amber-500/20 hover:bg-amber-500/40 text-amber-300 border-amber-500/30 transition-all">Revoke Admin</button>`:''}
+                ${u.role!=='owner'&&session?.role==='owner'?`<button onclick="confirmTransfer('${u.id}','${u.username}')" class="px-3 py-1.5 text-xs font-medium rounded-lg border bg-white/5 hover:bg-white/15 text-white/50 hover:text-white/80 border-white/10 transition-all">Transfer Ownership</button>`:''}
+              </div>`:''}
+            </div>
+          </div>`).join('')}
+      </div>`
+
+    main.querySelector('#add-user-btn').addEventListener('click',()=>{
+      const f=main.querySelector('#add-user-form')
+      f.classList.toggle('hidden')
+    })
+    main.querySelector('#reg-cancel')?.addEventListener('click',()=>main.querySelector('#add-user-form').classList.add('hidden'))
+    main.querySelector('#reg-form')?.addEventListener('submit',function(e){
+      e.preventDefault()
+      const username=main.querySelector('#reg-username').value.trim()
+      const password=main.querySelector('#reg-password').value
+      if(!username||!password) return
+      const users=DB.getUsers()
+      if(users.find(u=>u.username===username)){ toast('Username already taken','error'); return }
+      users.push({id:'u-'+Date.now(),username,password,role:'user',createdAt:new Date().toISOString()})
+      DB.saveUsers(users)
+      toast(`User "${username}" created`,'success')
+      renderAdmin()
+    })
+  }
+
+  window.grantAdmin=function(id){
+    const users=DB.getUsers()
+    const u=users.find(u=>u.id===id)
+    if(!u) return
+    u.role='admin'
+    DB.saveUsers(users)
+    toast(`${u.username} is now an admin`,'success')
+    renderAdmin()
+  }
+  window.revokeAdmin=function(id){
+    const users=DB.getUsers()
+    const u=users.find(u=>u.id===id)
+    if(!u) return
+    u.role='user'
+    DB.saveUsers(users)
+    toast(`Admin revoked from ${u.username}`,'success')
+    renderAdmin()
+  }
+  window.confirmTransfer=function(id,username){
+    if(!confirm(`Transfer ownership to "${username}"? You will become an admin.`)) return
+    const users=DB.getUsers()
+    const session=Auth.current()
+    const target=users.find(u=>u.id===id)
+    const current=users.find(u=>u.id===session?.id)
+    if(!target||!current) return
+    target.role='owner'
+    current.role='admin'
+    DB.saveUsers(users)
+    const newSession={...session,role:'admin'}
+    DB.saveSession(newSession)
+    toast(`Ownership transferred to ${username}`,'success')
+    navigate(studentsPage)
+  }
+
+  renderAdmin()
+  return page
+}
+
+// ═══════════════════════════════════════════
+// FIRST-TIME SETUP PAGE
+// ═══════════════════════════════════════════
+function setupPage(){
+  const div=document.createElement('div')
+  div.className='min-h-screen flex items-center justify-center p-4'
+  div.innerHTML=`
+    <div class="absolute inset-0 overflow-hidden pointer-events-none">
+      <div class="absolute -top-40 -right-40 w-96 h-96 bg-purple-500/10 rounded-full blur-3xl"></div>
+      <div class="absolute -bottom-40 -left-40 w-96 h-96 bg-primary-500/10 rounded-full blur-3xl"></div>
+    </div>
+    <div class="relative w-full max-w-md slide-up">
+      <div class="text-center mb-8">
+        <div class="inline-flex items-center justify-center w-20 h-20 bg-white rounded-2xl mb-4 border border-white/20 overflow-hidden"><img src="logo.png" alt="logo" class="w-full h-full object-contain p-1"/></div>
+        <h1 class="text-3xl font-bold text-white mb-1">ይሳኮር ቤቴ</h1>
+        <p class="text-white/60 text-sm">Welcome! Let's set up your owner account.</p>
+      </div>
+      <div class="bg-white/10 backdrop-blur-md rounded-2xl border border-white/20 p-8 shadow-2xl">
+        <div class="flex items-center gap-3 mb-6 px-4 py-3 bg-amber-500/10 border border-amber-500/30 rounded-xl">
+          <span class="text-2xl">👑</span>
+          <div>
+            <p class="text-amber-300 font-semibold text-sm">Owner Setup</p>
+            <p class="text-amber-200/60 text-xs">This account will have full control over the system.</p>
+          </div>
+        </div>
+        <div id="setup-error" class="hidden mb-4 px-4 py-3 bg-red-500/20 border border-red-500/40 rounded-xl text-red-200 text-sm"></div>
+        <form id="setup-form" class="space-y-4">
+          <div>
+            <label class="block text-white/70 text-sm font-medium mb-1.5">Your Username</label>
+            <input id="setup-username" type="text" placeholder="Choose a username" required autofocus
+              class="w-full px-4 py-3 bg-white/10 border border-white/20 rounded-xl text-white placeholder-white/30 focus:outline-none focus:ring-2 focus:ring-primary-400 focus:border-transparent transition-all"/>
+          </div>
+          <div>
+            <label class="block text-white/70 text-sm font-medium mb-1.5">Your Password</label>
+            <div class="relative">
+              <input id="setup-password" type="password" placeholder="Choose a strong password" required
+                class="w-full px-4 py-3 bg-white/10 border border-white/20 rounded-xl text-white placeholder-white/30 focus:outline-none focus:ring-2 focus:ring-primary-400 focus:border-transparent transition-all pr-12"/>
+              <button type="button" id="toggle-setup-pw" class="absolute right-3 top-1/2 -translate-y-1/2 text-white/40 hover:text-white/70 transition-colors text-lg">👁️</button>
+            </div>
+          </div>
+          <div>
+            <label class="block text-white/70 text-sm font-medium mb-1.5">Confirm Password</label>
+            <div class="relative">
+              <input id="setup-confirm" type="password" placeholder="Repeat your password" required
+                class="w-full px-4 py-3 bg-white/10 border border-white/20 rounded-xl text-white placeholder-white/30 focus:outline-none focus:ring-2 focus:ring-primary-400 focus:border-transparent transition-all pr-12"/>
+              <button type="button" id="toggle-setup-confirm" class="absolute right-3 top-1/2 -translate-y-1/2 text-white/40 hover:text-white/70 transition-colors text-lg">👁️</button>
+            </div>
+          </div>
+          <button type="submit"
+            class="w-full py-3 bg-amber-500 hover:bg-amber-400 text-white font-semibold rounded-xl transition-all shadow-lg shadow-amber-500/30 mt-2">
+            Create Owner Account
+          </button>
+        </form>
+      </div>
+    </div>`
+
+  div.querySelector('#toggle-setup-pw').addEventListener('click',function(){
+    const pw=div.querySelector('#setup-password')
+    pw.type=pw.type==='password'?'text':'password'
+    this.textContent=pw.type==='password'?'👁️':'🙈'
+  })
+  div.querySelector('#toggle-setup-confirm').addEventListener('click',function(){
+    const pw=div.querySelector('#setup-confirm')
+    pw.type=pw.type==='password'?'text':'password'
+    this.textContent=pw.type==='password'?'👁️':'🙈'
+  })
+
+  div.querySelector('#setup-form').addEventListener('submit',function(e){
+    e.preventDefault()
+    const username=div.querySelector('#setup-username').value.trim()
+    const password=div.querySelector('#setup-password').value
+    const confirm=div.querySelector('#setup-confirm').value
+    const errEl=div.querySelector('#setup-error')
+    if(!username){ errEl.textContent='Username is required'; errEl.classList.remove('hidden'); return }
+    if(password.length<4){ errEl.textContent='Password must be at least 4 characters'; errEl.classList.remove('hidden'); return }
+    if(password!==confirm){ errEl.textContent='Passwords do not match'; errEl.classList.remove('hidden'); return }
+    DB.saveUsers([{id:'owner-1',username,password,role:'owner',createdAt:new Date().toISOString()}])
+    DB.markSetupDone()
+    toast(`Welcome, ${username}! Your owner account is ready.`,'success')
+    navigate(loginPage)
+  })
+  return div
+}
+
+// ═══════════════════════════════════════════
+// BOOT
+// ═══════════════════════════════════════════
+const session=Auth.current()
+if(!DB.isSetupDone()){
+  navigate(setupPage)
+} else if(session&&(session.role==='owner'||session.role==='admin')){
+  navigate(studentsPage)
+} else {
+  navigate(loginPage)
+}
+</script>
+</body>
+</html>
