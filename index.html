@@ -5,13 +5,13 @@
 <meta name="viewport" content="width=device-width,initial-scale=1.0"/>
 <title>ይሳኮር ቤቴ — Student Enrollment</title>
 <script src="https://cdn.tailwindcss.com"></script>
+<script src="https://cdn.tailwindcss.com"></script>
+<script>
+tailwind.config={theme:{extend:{colors:{primary:{'50':'#f0f9ff','100':'#e0f2fe','200':'#bae6fd','300':'#7dd3fc','400':'#38bdf8','500':'#0ea5e9','600':'#0284c7','700':'#0369a1','800':'#075985','900':'#0c4a6e'},accent:{'500':'#d946ef','600':'#c026d3'}},animation:{'fade-in':'fadeIn 0.3s ease','slide-up':'slideUp 0.3s ease','slide-down':'slideDown 0.3s ease'},keyframes:{fadeIn:{'0%':{opacity:'0'},'100%':{opacity:'1'}},slideUp:{'0%':{transform:'translateY(10px)',opacity:'0'},'100%':{transform:'translateY(0)',opacity:'1'}},slideDown:{'0%':{transform:'translateY(-10px)',opacity:'0'},'100%':{transform:'translateY(0)',opacity:'1'}}}}}}
+</script>
 <script type="module">
-// ═══════════════════════════════════════════
-// FIREBASE SETUP
-// ═══════════════════════════════════════════
 import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js'
-import { getFirestore, doc, getDoc, setDoc, collection, getDocs, addDoc, updateDoc, deleteDoc, onSnapshot } from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js'
-
+import { getFirestore, doc, getDoc, setDoc } from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js'
 const firebaseConfig = {
   apiKey: "AIzaSyClWTAH7_UmCgxjCFep3-TmnX4K6HURnYs",
   authDomain: "ysakor-bete.firebaseapp.com",
@@ -20,15 +20,24 @@ const firebaseConfig = {
   messagingSenderId: "219589882501",
   appId: "1:219589882501:web:dae5a1545c1ff04bf7efec"
 }
-
 const firebaseApp = initializeApp(firebaseConfig)
 const db = getFirestore(firebaseApp)
-window.FS = { db, doc, getDoc, setDoc, collection, getDocs, addDoc, updateDoc, deleteDoc, onSnapshot }
-window.firebaseReady = true
-document.dispatchEvent(new Event('firebase-ready'))
-</script>
-<script>
-tailwind.config={theme:{extend:{colors:{primary:{'50':'#f0f9ff','100':'#e0f2fe','200':'#bae6fd','300':'#7dd3fc','400':'#38bdf8','500':'#0ea5e9','600':'#0284c7','700':'#0369a1','800':'#075985','900':'#0c4a6e'},accent:{'500':'#d946ef','600':'#c026d3'}},animation:{'fade-in':'fadeIn 0.3s ease','slide-up':'slideUp 0.3s ease','slide-down':'slideDown 0.3s ease'},keyframes:{fadeIn:{'0%':{opacity:'0'},'100%':{opacity:'1'}},slideUp:{'0%':{transform:'translateY(10px)',opacity:'0'},'100%':{transform:'translateY(0)',opacity:'1'}},slideDown:{'0%':{transform:'translateY(-10px)',opacity:'0'},'100%':{transform:'translateY(0)',opacity:'1'}}}}}}
+window.FS = { db, doc, getDoc, setDoc }
+
+// Pull data from Firebase then boot
+async function syncAndBoot(){
+  try{
+    const usersSnap = await getDoc(doc(db,'app','users'))
+    if(usersSnap.exists()){ const d=usersSnap.data(); if(d.list&&d.list.length>0){ localStorage.setItem('yb_users',JSON.stringify(d.list)); localStorage.setItem('yb_setup','1') } }
+    const studentsSnap = await getDoc(doc(db,'app','students'))
+    if(studentsSnap.exists()){ const d=studentsSnap.data(); if(d.list) localStorage.setItem('yb_students',JSON.stringify(d.list)) }
+    const callSnap = await getDoc(doc(db,'app','callSession'))
+    if(callSnap.exists()){ const d=callSnap.data(); if(d.data) localStorage.setItem('yb_call_session',JSON.stringify(d.data)) }
+  }catch(e){ console.error('Firebase sync error',e) }
+  if(window._bootApp) window._bootApp()
+  else window._firebaseReady = true
+}
+syncAndBoot()
 </script>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet"/>
 <style>
@@ -104,34 +113,14 @@ const DB = {
     }
   },
 
-  // Pull latest data from Firebase
-  async syncFromFirebase(){
-    if(!window.FS) return
-    const {db,doc,getDoc}=window.FS
-    try{
-      const usersSnap=await getDoc(doc(db,'app','users'))
-      if(usersSnap.exists()) localStorage.setItem('yb_users',JSON.stringify(usersSnap.data().list||[]))
-
-      const studentsSnap=await getDoc(doc(db,'app','students'))
-      if(studentsSnap.exists()) localStorage.setItem('yb_students',JSON.stringify(studentsSnap.data().list||[]))
-
-      const callSnap=await getDoc(doc(db,'app','callSession'))
-      if(callSnap.exists()) localStorage.setItem('yb_call_session',JSON.stringify(callSnap.data().data||{}))
-
-      // Check setup
-      if(usersSnap.exists()&&(usersSnap.data().list||[]).length>0) localStorage.setItem('yb_setup','1')
-    }catch(e){ console.error('Firebase sync error',e) }
-  },
+  // Pull latest data from Firebase - now handled by module script
+  async syncFromFirebase(){ /* handled by module */ },
 
   init(){
-    // Sync from Firebase when ready
-    if(window.firebaseReady){
-      this.syncFromFirebase().then(()=>{ if(window._bootApp) window._bootApp() })
-    } else {
-      document.addEventListener('firebase-ready',()=>{
-        this.syncFromFirebase().then(()=>{ if(window._bootApp) window._bootApp() })
-      })
-    }
+    // Boot is triggered by Firebase module script after sync
+    // If Firebase already synced before this ran, boot immediately
+    if(window._firebaseReady){ window._bootApp && window._bootApp() }
+    // Otherwise _bootApp will be called by the module script after sync
   }
 }
 DB.init()
@@ -259,21 +248,8 @@ function loginPage(){
           </button>
         </form>
         <p class="text-center text-white/30 text-xs mt-6">ይሳኮር ቤቴ — Private Student Registry</p>
-        <div class="text-center mt-3">
-          <button id="reset-btn" class="text-white/20 hover:text-white/50 text-xs underline transition-colors">First time? Reset &amp; create owner account</button>
-        </div>
       </div>
     </div>`
-
-  div.querySelector('#reset-btn').addEventListener('click',()=>{
-    if(confirm('This will reset your owner account. All enrolled students will be kept. Continue?')){
-      // Only clear auth data, keep students and call history
-      localStorage.removeItem('yb_users')
-      localStorage.removeItem('yb_session')
-      localStorage.removeItem('yb_setup')
-      navigate(setupPage)
-    }
-  })
 
   div.querySelector('#toggle-pw').addEventListener('click',function(){
     const pw=div.querySelector('#login-password')
@@ -1102,7 +1078,7 @@ const SEED_STUDENTS=[
 ]
 
 window._bootApp = function(){
-  // Auto-seed students if Firebase has none
+  // Auto-seed students if none exist
   if(window.FS && DB.getStudents().length===0){
     const now=new Date().toISOString()
     const students=SEED_STUDENTS.map((r,i)=>({
@@ -1119,7 +1095,9 @@ window._bootApp = function(){
     DB.saveStudents(students)
   }
   const session=Auth.current()
-  if(!DB.isSetupDone()){
+  const setupDone=DB.isSetupDone()
+  // Only show setup if truly no owner exists (first time ever)
+  if(!setupDone){
     navigate(setupPage)
   } else if(session&&(session.role==='owner'||session.role==='admin')){
     navigate(studentsPage)
