@@ -224,6 +224,7 @@ function loginPage(){
 // ═══════════════════════════════════════════
 function studentsPage(){
   if(!Auth.isPrivileged()){ navigate(loginPage); return document.createElement('div') }
+  let showUncalledOnly=false
   const page=document.createElement('div')
   page.className='min-h-screen'
   page.appendChild(navbar())
@@ -505,7 +506,6 @@ function studentsPage(){
     overlay.addEventListener('click',e=>{ if(e.target===overlay) overlay.remove() })
   })
 
-  let showUncalledOnly=false
   main.querySelector('#call-filter-btn').addEventListener('click',function(){
     showUncalledOnly=!showUncalledOnly
     this.textContent=showUncalledOnly?'Show all':'Show uncalled only'
